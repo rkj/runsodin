@@ -37,7 +37,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from urllib.request import urlopen, Request
 from urllib.error import URLError, HTTPError
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 
 from modules.printers.parsing.moonraker import parse_status as parse_moonraker_status
 
@@ -284,7 +284,7 @@ class MoonrakerPrinter:
             objects.append("fan")
         objects.extend(self._temperature_sensors)
         objects.extend(self._filament_sensors)
-        query = "&".join(objects)
+        query = "&".join(quote(name, safe="") for name in objects)
         try:
             data = self._get(f"/printer/objects/query?{query}")
             if not data or "result" not in data:

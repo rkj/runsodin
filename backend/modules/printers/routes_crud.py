@@ -540,7 +540,16 @@ def test_printer_connection(request: TestConnectionRequest, current_user: dict =
     elif api_type == "prusalink":
         import httpx as httpx_client
         try:
-            r = httpx_client.get(f"http://{request.api_host}/api/version", timeout=5)  # nosemgrep: python.django.security.injection.tainted-url-host.tainted-url-host -- verified safe — admin-gated by require_role and SSRF-checked by _check_ssrf_blocklist (or setup-locked)
+            credential = request.api_key or ""
+            if "|" in credential:
+                username, password = credential.split("|", 1)
+                auth = httpx_client.DigestAuth(username, password)
+                headers = {}
+            else:
+                auth = None
+                headers = {"X-Api-Key": credential} if credential else {}
+            r = httpx_client.get(f"http://{request.api_host}/api/version", timeout=5,
+                                 headers=headers, auth=auth)  # nosemgrep: python.django.security.injection.tainted-url-host.tainted-url-host -- verified safe — admin-gated by require_role and SSRF-checked by _check_ssrf_blocklist (or setup-locked)
             if r.status_code == 200:
                 # Official PrusaLink Version schema defines `printer` as a
                 # software-version string, not a hardware-model identifier.

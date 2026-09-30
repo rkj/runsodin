@@ -1,0 +1,19 @@
+# Application source is maintained in rkj/runsodin; no build-time patches.
+# Keep the release runtime's dependencies stable while rebuilding our complete app.
+FROM node:20-slim@sha256:c6585df72c34172bebd8d36abed961e231d7d3b5cee2e01294c4495e8a03f687 AS ui-build
+WORKDIR /build/frontend
+COPY frontend/package*.json ./
+RUN npm ci --no-audit --no-fund
+COPY frontend/ ./
+COPY design/ /build/design/
+COPY VERSION /build/VERSION
+RUN npm run build
+
+FROM ghcr.io/hughkantsime/odin:v1.9.14@sha256:cd5f8a62a509a06a327ef128b76456e9e7dcdbf0e28d3f9215b6c602e46d3a1d
+RUN rm -rf /app/backend /app/frontend/dist
+COPY --chown=10001:10001 backend/ /app/backend/
+COPY --from=ui-build --chown=10001:10001 /build/frontend/dist /app/frontend/dist
+COPY VERSION /app/VERSION
+ARG ODIN_SOURCE_REVISION
+LABEL org.opencontainers.image.source="https://github.com/rkj/runsodin" \
+      org.opencontainers.image.revision="${ODIN_SOURCE_REVISION}"

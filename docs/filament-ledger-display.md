@@ -87,7 +87,7 @@ Backend checks use a temporary bootstrap database and a synthetic provider;
 no running printer, inventory service, or login is required:
 
 ```sh
-ODIN_TEST_BACKEND=backend python tests/printers/test_filament_ledger_display.py
+ODIN_TEST_BACKEND=backend python tests/homelab/test_ledger.py
 ```
 
 Run the card regressions and production build from `frontend/`:

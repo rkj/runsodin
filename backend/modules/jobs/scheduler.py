@@ -403,7 +403,13 @@ class Scheduler:
         education_policy = registry.get_provider("EducationPolicyProvider")
         for job in pending_jobs:
             education_context = None
-            approved_printer_id = None
+            from modules.models_library.target_printer import model_target_printer
+            try:
+                approved_printer_id = model_target_printer(db, job.model_id)
+            except ValueError:
+                result.skipped_count += 1
+                result.errors.append(f"Could not schedule job {job.id}: invalid printer association")
+                continue
             if self._is_education_job(db, job.id):
                 if education_policy is None:
                     result.skipped_count += 1
@@ -433,7 +439,12 @@ class Scheduler:
                         f"Could not schedule Education job {job.id}: policy denied"
                     )
                     continue
-                approved_printer_id = int(education_context["approved_printer_id"])
+                education_printer_id = int(education_context["approved_printer_id"])
+                if approved_printer_id is not None and education_printer_id != approved_printer_id:
+                    result.skipped_count += 1
+                    result.errors.append(f"Could not schedule job {job.id}: file printer association differs from approval")
+                    continue
+                approved_printer_id = education_printer_id
                 compatibility = evaluate_submission_compatibility(
                     db,
                     org_id=int(education_context["org_id"]),

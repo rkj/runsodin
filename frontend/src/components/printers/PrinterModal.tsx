@@ -174,6 +174,12 @@ export default function PrinterModal({ isOpen, onClose, onSubmit, printer, onSyn
       return
     }
 
+    if (printer?.has_api_key && (formData.api_type === 'prusalink' || formData.api_type === 'moonraker') && !formData.api_key_field) {
+      setTestStatus('error')
+      setTestMessage('Enter API key to test; leave blank to keep the saved key when saving.')
+      return
+    }
+
     setTestStatus('testing')
     setTestMessage('Connecting to printer...')
 
@@ -187,7 +193,9 @@ export default function PrinterModal({ isOpen, onClose, onSubmit, printer, onSyn
         plug_token: formData.plug_token || null,
         api_host: formData.api_host,
         serial: formData.serial,
-        access_code: formData.access_code
+        access_code: formData.access_code,
+        ...((formData.api_type === 'prusalink' || formData.api_type === 'moonraker') && formData.api_key_field
+          ? { api_key: formData.api_key_field } : {}),
       })
 
       if (result.success) {
@@ -227,8 +235,10 @@ export default function PrinterModal({ isOpen, onClose, onSubmit, printer, onSyn
 
     if (formData.api_type) submitData.api_type = formData.api_type
     if (formData.api_host) submitData.api_host = formData.api_host
-    if (formData.serial && formData.access_code) {
+    if (formData.api_type === 'bambu' && formData.serial && formData.access_code) {
       submitData.api_key = `${formData.serial}|${formData.access_code}`
+    } else if ((formData.api_type === 'prusalink' || formData.api_type === 'moonraker') && formData.api_key_field) {
+      submitData.api_key = formData.api_key_field
     }
 
     onSubmit(submitData, printer?.id)
@@ -390,8 +400,9 @@ export default function PrinterModal({ isOpen, onClose, onSubmit, printer, onSyn
             {(formData.api_type === 'moonraker' || formData.api_type === 'prusalink') && (
             <div>
               <label className="block text-sm text-[var(--brand-text-secondary)] mb-1">API Key {formData.api_type === 'prusalink' ? '' : '(optional)'}</label>
-              <input type="text" value={formData.api_key_field || ''} onChange={(e) => setFormData(prev => ({ ...prev, api_key_field: e.target.value }))} className="w-full bg-[var(--brand-card-bg)] border border-[var(--brand-card-border)] rounded-md px-3 py-2 font-mono text-sm" placeholder={formData.api_type === 'prusalink' ? 'PrusaLink API key from Settings' : 'Moonraker API key (if required)'} />
+              <input type="password" autoComplete="new-password" value={formData.api_key_field || ''} onChange={(e) => setFormData(prev => ({ ...prev, api_key_field: e.target.value }))} className="w-full bg-[var(--brand-card-bg)] border border-[var(--brand-card-border)] rounded-md px-3 py-2 font-mono text-sm" placeholder={formData.api_type === 'prusalink' ? 'PrusaLink API key from Settings' : 'Moonraker API key (if required)'} />
               {formData.api_type === 'prusalink' && <p className="text-xs text-[var(--brand-text-muted)] mt-1">Find in PrusaLink &rarr; Settings &rarr; API Key</p>}
+              {isEditing && printer?.has_api_key && <p className="text-xs text-[var(--brand-text-muted)] mt-1">Leave blank to keep the saved API key.</p>}
             </div>
             )}
 

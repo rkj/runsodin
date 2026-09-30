@@ -168,7 +168,7 @@ def _get_next_scheduled_job(printer_id: int) -> Optional[dict]:
                 SELECT j.id, j.item_name, pf.stored_path, pf.original_filename
                 FROM jobs j
                 JOIN models m ON j.model_id = m.id
-                JOIN print_files pf ON pf.model_id = m.id
+                JOIN print_files pf ON pf.id = m.print_file_id
                 WHERE j.printer_id = :pid
                   AND j.status = 'scheduled'
                   AND pf.stored_path IS NOT NULL
@@ -208,7 +208,7 @@ def _load_job(job_id: int) -> Optional[dict]:
                 JOIN models m ON j.model_id = m.id
                 JOIN print_files pf ON (
                     (s.print_file_id IS NOT NULL AND pf.id = s.print_file_id)
-                    OR (s.id IS NULL AND pf.model_id = m.id)
+                    OR (s.id IS NULL AND pf.id = m.print_file_id)
                 )
                 WHERE j.id = :jid
                 """),
@@ -523,7 +523,7 @@ def dispatch_job(printer_id: int, job_id: int) -> tuple[bool, str]:
 
     # Determine remote filename
     remote_filename = job.get("original_filename") or os.path.basename(stored_path)
-    if not remote_filename.endswith((".3mf", ".gcode", ".bgcode")):
+    if not remote_filename.lower().endswith((".3mf", ".gcode", ".bgcode")):
         remote_filename += ".3mf"  # assume 3mf if no extension
 
     # Load printer credentials
@@ -542,6 +542,17 @@ def dispatch_job(printer_id: int, job_id: int) -> tuple[bool, str]:
             f"{api_type.title()} printers cannot print .3mf files — they need pre-sliced .gcode. "
             "Upload a .gcode file for this model to enable dispatch."
         )
+
+    # Preserve exact printer association even if a job was reassigned elsewhere.
+    from modules.models_library.target_printer import target_from_facts
+    try:
+        bound_printer_id = target_from_facts(job.get("compatibility_facts_json"))
+    except ValueError:
+        return False, "Invalid file printer association; re-import the file"
+    if bound_printer_id is not None and bound_printer_id != printer_id:
+        return False, "This file was imported for another printer; use the associated printer or import a separately sliced file"
+    if stored_path.lower().endswith(".bgcode") and api_type != "prusalink":
+        return False, "Binary G-code requires a PrusaLink printer"
 
     # Guard 1 — API type compatibility
     printer_name = creds.get("ip", f"printer {printer_id}")

@@ -105,7 +105,6 @@ O.D.I.N. speaks [Model Context Protocol](https://modelcontextprotocol.io) native
 - [Features](https://runsodin.com/features) — Full feature catalog
 - [Pricing](https://runsodin.com/pricing) — Community, Pro, Education, Enterprise tiers
 - [API Docs](https://runsodin.com) — Swagger UI at `/api/docs` on your running instance
-- [Read-only external filament display](docs/filament-ledger-display.md) — Optional external tool-to-spool mapping feed
 - [CHANGELOG](CHANGELOG.md) — Version history
 - [SECURITY](SECURITY.md) — Security policy and vulnerability reporting
 
@@ -146,3 +145,6 @@ License keys are verified locally with Ed25519 signatures. No phone home, no clo
 Built by [Sublab 3DP](https://runsodin.com)
 
 </div>
+
+Maintained fork: [branch, build and regression checks](docs/homelab-fork.md).
+Optional [read-only external filament display](docs/filament-ledger-display.md).

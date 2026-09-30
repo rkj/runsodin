@@ -47,6 +47,7 @@ class FilamentType(str, Enum):
 
     # === Standard Materials (backwards compatible) ===
     PLA = "PLA"
+    PLA_PLUS = "PLA+"
     PETG = "PETG"
     ABS = "ABS"
     ASA = "ASA"

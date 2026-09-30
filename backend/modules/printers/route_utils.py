@@ -42,6 +42,7 @@ class TestConnectionRequest(PydanticBaseModel):
     api_host: str
     serial: Optional[str] = None
     access_code: Optional[str] = None
+    api_key: Optional[str] = None
 
 
 # ====================================================================

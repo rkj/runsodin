@@ -12,6 +12,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from core.db import get_db
+from core.base import FilamentType
 from core.dependencies import log_audit
 from core.rbac import require_role
 from modules.inventory.models import Spool
@@ -189,7 +190,7 @@ def scan_assign_spool(
         # Update existing slot
         existing_slot.assigned_spool_id = spool.id
         existing_slot.spool_confirmed = True
-        existing_slot.filament_type = spool.filament.material if spool.filament else None
+        existing_slot.filament_type = FilamentType.from_bambu_code(spool.filament.material) if spool.filament else FilamentType.UNKNOWN
         existing_slot.color = spool.filament.name if spool.filament else None
         existing_slot.color_hex = spool.filament.color_hex if spool.filament else None
     else:
@@ -198,7 +199,7 @@ def scan_assign_spool(
             printer_id=data.printer_id,
             slot_number=data.slot,
             assigned_spool_id=spool.id,
-            filament_type=spool.filament.material if spool.filament else None,
+            filament_type=FilamentType.from_bambu_code(spool.filament.material) if spool.filament else FilamentType.UNKNOWN,
             color=spool.filament.name if spool.filament else None,
             color_hex=spool.filament.color_hex if spool.filament else None,
             spool_confirmed=True,

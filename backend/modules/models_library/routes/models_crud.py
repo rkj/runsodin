@@ -252,6 +252,20 @@ def schedule_from_model(
             if isinstance(slot, dict) and slot.get("color"):
                 colors.append(slot["color"])
 
+    # Keep a pre-sliced file on the exact printer selected at import.
+    from modules.models_library.target_printer import model_target_printer
+    try:
+        bound_printer_id = model_target_printer(db, model.id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file printer association; re-import the file")
+    if bound_printer_id is not None:
+        if printer_id is not None and printer_id != bound_printer_id:
+            raise HTTPException(status_code=400, detail="This file is associated with a different printer; import a separately sliced file")
+        printer_id = bound_printer_id
+    if printer_id is not None:
+        from .print_files import _get_accessible_printer
+        _get_accessible_printer(db, printer_id, current_user)
+
     # Calculate cost
     estimated_cost, suggested_price, _ = calculate_job_cost(db, model_id=model.id)
 

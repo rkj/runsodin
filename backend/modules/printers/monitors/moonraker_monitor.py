@@ -234,37 +234,6 @@ class MoonrakerMonitor:
                      "gstate": gstate, "stage": stage, "fan_speed": fan_speed_val,
                      "noz_dia": noz_dia, "pid": self.printer_id})
 
-                # WebSocket push to frontend (same as Bambu monitor)
-                ws_push('printer_telemetry', {
-                    'printer_id': self.printer_id,
-                    'bed_temp': bed_t,
-                    'bed_target': bed_tt,
-                    'nozzle_temp': noz_t,
-                    'nozzle_target': noz_tt,
-                    'state': gstate,
-                    'progress': progress,
-                    'remaining_min': remaining_min,
-                    'current_layer': current_layer,
-                    'total_layers': total_layers,
-                    'fan_speed': fan_speed_val,
-                })
-
-                # MQTT republish to external broker (same as Bambu monitor)
-                if mqtt_republish:
-                    try:
-                        mqtt_republish.republish_telemetry(self.printer_id, self.name, {
-                            "bed_temp": bed_t, "bed_target": bed_tt,
-                            "nozzle_temp": noz_t, "nozzle_target": noz_tt,
-                            "state": gstate,
-                            "progress": progress,
-                            "remaining_min": remaining_min,
-                            "current_layer": current_layer,
-                            "total_layers": total_layers,
-                            "fan_speed": fan_speed_val,
-                        })
-                    except Exception as e:
-                        log.debug(f"Failed to push printer state event: {e}")
-
                 # ---- Timeseries telemetry (60s inserts during prints) ----
                 if gstate in ('RUNNING', 'PRINTING', 'PAUSE', 'PAUSED') and now - self._last_telemetry_insert >= TELEMETRY_INSERT_INTERVAL:
                     self._last_telemetry_insert = now
@@ -288,7 +257,37 @@ class MoonrakerMonitor:
                     except Exception as e:
                         log.debug(f"[{self.name}] Env telemetry insert: {e}")
 
-                self._last_heartbeat = now
+              # WebSocket push to frontend (same as Bambu monitor)
+              ws_push('printer_telemetry', {
+                  'printer_id': self.printer_id,
+                  'bed_temp': bed_t,
+                  'bed_target': bed_tt,
+                  'nozzle_temp': noz_t,
+                  'nozzle_target': noz_tt,
+                  'state': gstate,
+                  'progress': progress,
+                  'remaining_min': remaining_min,
+                  'current_layer': current_layer,
+                  'total_layers': total_layers,
+                  'fan_speed': fan_speed_val,
+              })
+
+              # MQTT republish to external broker (same as Bambu monitor)
+              if mqtt_republish:
+                  try:
+                      mqtt_republish.republish_telemetry(self.printer_id, self.name, {
+                          "bed_temp": bed_t, "bed_target": bed_tt,
+                          "nozzle_temp": noz_t, "nozzle_target": noz_tt,
+                          "state": gstate,
+                          "progress": progress,
+                          "remaining_min": remaining_min,
+                          "current_layer": current_layer,
+                          "total_layers": total_layers,
+                          "fan_speed": fan_speed_val,
+                      })
+                  except Exception as e:
+                      log.debug(f"Failed to push printer state event: {e}")
+              self._last_heartbeat = now
             except Exception as e:
                 log.warning(f"Failed to update telemetry for {self.name}: {e}")
 
@@ -536,19 +535,12 @@ class MoonrakerMonitor:
                         self._last_filename = ""
                         return True
 
-                # Calculate filament used (Klipper reports mm extruded)
-                # Convert mm to grams: PLA ~1.24 g/cm³, 1.75mm filament ≈ 2.98g/m
-                filament_used_g = None
-                if status.filament_used_mm and status.filament_used_mm > 0:
-                    filament_used_g = round(status.filament_used_mm / 1000.0 * 2.98, 2)
-
                 conn.execute(text("""
                     UPDATE print_jobs
-                    SET ended_at = :ended, status = :status, print_duration_seconds = :dur,
-                        filament_used_g = :fil
+                    SET ended_at = :ended, status = :status
                     WHERE id = :jid
-                """), {"ended": now_utc, "status": end_status, "dur": duration_seconds,
-                       "fil": filament_used_g, "jid": self._current_job_db_id})
+                """), {"ended": now_utc, "status": end_status,
+                       "jid": self._current_job_db_id})
 
                 # If linked to a scheduled job, update it too
                 row = conn.execute(text("""
@@ -565,7 +557,8 @@ class MoonrakerMonitor:
                     log.info(f"[{self.name}] Scheduled job #{row[0]} marked {sched_status}")
 
                     # Auto-deduct filament if completed
-                    if end_status == "completed":
+                    if (end_status == "completed" and
+                            os.getenv("MOONRAKER_FILAMENT_DEDUCTION", "true").lower() == "true"):
                         self._auto_deduct_filament(conn, row[0])
             log.info(f"[{self.name}] Job {end_status}: DB id {self._current_job_db_id}")
 
@@ -659,7 +652,7 @@ class MoonrakerMonitor:
         """Attempt auto-dispatch of next scheduled job after print completes."""
         try:
             time.sleep(5)
-            import printer_dispatch
+            from modules.printers import dispatch as printer_dispatch
             printer_dispatch.attempt_dispatch(self.printer_id)
         except Exception as e:
             log.warning(f"[{self.name}] Dispatch attempt error: {e}")
@@ -716,13 +709,18 @@ class MoonrakerMonitor:
                     SELECT j.id as job_id, j.status, pf.filename, pf.original_filename,
                            pf.layer_count, m.name as model_name
                     FROM jobs j
-                    JOIN print_files pf ON j.print_file_id = pf.id
-                    JOIN models m ON pf.model_id = m.id
+                    JOIN models m ON j.model_id = m.id
+                    JOIN print_files pf ON pf.model_id = m.id
                     WHERE j.printer_id = :pid
-                      AND j.status IN ('scheduled', 'pending')
+                      AND (j.status IN ('scheduled', 'pending')
+                           OR (j.status = 'printing' AND NOT EXISTS (
+                               SELECT 1 FROM print_jobs linked
+                               WHERE linked.scheduled_job_id = j.id
+                           )))
                       AND NOT EXISTS (
                           SELECT 1 FROM education_submissions s WHERE s.job_id=j.id
                       )
+                    ORDER BY CASE WHEN j.status = 'printing' THEN 0 ELSE 1 END, j.id
                 """), {"pid": self.printer_id}).mappings().fetchall()
 
                 if not candidates:
