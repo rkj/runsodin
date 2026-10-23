@@ -103,7 +103,7 @@ RUN mkdir -p /data /data/backups /data/uploads /data/static/branding /app/go2rtc
     && cp -a /app/backend/static/branding/. /usr/local/share/odin/branding-defaults/ \
     && rm -rf /app/backend/static/branding \
     && ln -s /data/static/branding /app/backend/static/branding \
-    && chmod -R go-w /app \
+    && chmod -R go-w /app /usr/local/share/odin/branding-defaults \
     && chown -R odin:odin /app/go2rtc /data
 
 # Default environment
