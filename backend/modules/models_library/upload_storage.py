@@ -88,11 +88,19 @@ def _own_upload_model(db, normalized_name, raw_name, org_id):
     return rows[0] if len(rows) == 1 else None
 
 
-def _new_upload_path(file_id, filename):
+def _upload_storage_root():
     root = Path(os.environ.get("PRINT_FILE_STORAGE_ROOT") or "/data/print_files")
     if not root.is_absolute():
         raise HTTPException(status_code=400, detail="Print file storage root must be an absolute path")
     root = root.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _new_upload_path(file_id, filename, root=None):
+    """Owned payload path. ``root`` is only the scoped batch directory of an
+    internal multi-file import; ordinary uploads keep the configured root."""
+    root = Path(root).resolve() if root else _upload_storage_root()
     root.mkdir(parents=True, exist_ok=True)
     safe_name = re.sub(r'[^a-zA-Z0-9._-]', '_', filename or "file")
     path = root / f"{file_id}_{uuid.uuid4().hex}_{safe_name}"

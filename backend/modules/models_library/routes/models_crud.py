@@ -248,16 +248,31 @@ def schedule_from_model(
 
     assert_generic_model_reference_allowed(db, model.id)
     opts = options or ModelScheduleOptions()
-    printer = None
-    if printer_id is not None:
-        printer = db.query(Printer).filter(Printer.id == printer_id).first()
-        if not printer or not (check_org_access(current_user, printer.org_id) or printer.shared):
-            raise HTTPException(404, "Printer not found")
     file = _schedule_file(db, model, current_user)
     if (opts.print_file_id is None) != (opts.payload_sha256 is None):
         raise HTTPException(400, "File identity and payload hash must be supplied together")
     if opts.print_file_id is not None and (file is None or file.id != opts.print_file_id):
         raise HTTPException(409, "Selected print file changed; refresh scheduling options")
+
+    # A pre-sliced import belongs to the exact printer selected at import.
+    from modules.models_library.target_printer import target_from_facts
+    try:
+        bound_printer_id = target_from_facts(file.compatibility_facts_json) if file is not None else None
+    except ValueError:
+        raise HTTPException(400, "Invalid file printer association; re-import the file") from None
+    if bound_printer_id is not None:
+        if printer_id is not None and printer_id != bound_printer_id:
+            raise HTTPException(
+                400,
+                "This file is associated with a different printer; import a separately sliced file",
+            )
+        printer_id = bound_printer_id
+
+    printer = None
+    if printer_id is not None:
+        printer = db.query(Printer).filter(Printer.id == printer_id).first()
+        if not printer or not (check_org_access(current_user, printer.org_id) or printer.shared):
+            raise HTTPException(404, "Printer not found")
     file_id = payload_hash = plate_index = None
     selected_plate = None  # per-plate grams/time when a plate other than plate 1 is scheduled
     other_plate = False    # a 3MF plate other than plate 1 was scheduled

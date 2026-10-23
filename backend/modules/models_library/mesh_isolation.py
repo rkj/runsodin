@@ -502,9 +502,13 @@ def _decode(blob: bytes, mode: str, clean_exit: bool) -> Analysis:
 
 # --------------------------------------------------------------------------- entry points
 
-def run_admitted(path, ticket: Ticket, *, mode: str = "upload", name: Optional[str] = None,
-                 memory_limit: int = MEMORY_LIMIT_BYTES) -> Analysis:
-    """Blocking, on the 3MF executor, for an admitted caller. Raises Busy; else never raises."""
+def _run_worker_command(module: str, arguments, *, stdin_path: Optional[str], ticket: Ticket,
+                        memory_limit: int) -> tuple[bytes, bool]:
+    """Run one bounded worker child for an admitted caller; never raises OSError.
+
+    The child gets an empty working directory, a minimal environment, its own
+    session (whole process group killed on deadline) and no API-process parser.
+    """
     global LAST_WORKER_PID, _running
     try:
         slot = _acquire_run_slot(ticket)
@@ -512,15 +516,15 @@ def run_admitted(path, ticket: Ticket, *, mode: str = "upload", name: Optional[s
         ticket.release()  # the wait slot is only for waiting
     workdir = None
     blob, code = b"", None
+    package = None
     try:
         cpu_seconds = max(1, math.ceil(ticket.deadline - time.monotonic()))
         workdir = tempfile.mkdtemp(prefix="odin-3mf-")
-        with open(path, "rb") as package:
-            proc = subprocess.Popen(
-                [sys.executable, "-s", "-m", "modules.models_library.mesh_worker", str(memory_limit), str(cpu_seconds),
-                 mode, str(os.getpid()), os.path.basename(name or str(path))],
-                cwd=workdir, env=_child_env(), stdin=package, stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True)
+        package = open(stdin_path, "rb") if stdin_path else subprocess.DEVNULL
+        proc = subprocess.Popen(
+            [sys.executable, "-s", "-m", module, str(memory_limit), str(cpu_seconds), *arguments],
+            cwd=workdir, env=_child_env(), stdin=package, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, close_fds=True, start_new_session=True)
         LAST_WORKER_PID = proc.pid
         with _running_lock:
             _running += 1
@@ -539,12 +543,45 @@ def run_admitted(path, ticket: Ticket, *, mode: str = "upload", name: Optional[s
             with _running_lock:
                 _running -= 1
     except OSError:
-        return Analysis(status="failed")
+        return b"", False
     finally:
         _release_run_slot(slot)
+        if package not in (None, subprocess.DEVNULL):
+            package.close()
         if workdir:
             shutil.rmtree(workdir, ignore_errors=True)
-    return _decode(blob, mode, code == 0)
+    return blob, code == 0
+
+
+def run_admitted(path, ticket: Ticket, *, mode: str = "upload", name: Optional[str] = None,
+                 memory_limit: int = MEMORY_LIMIT_BYTES) -> Analysis:
+    """Blocking, on the 3MF executor, for an admitted caller. Raises Busy; else never raises."""
+    blob, clean_exit = _run_worker_command(
+        "modules.models_library.mesh_worker",
+        [mode, str(os.getpid()), os.path.basename(name or str(path))],
+        stdin_path=path, ticket=ticket, memory_limit=memory_limit)
+    return _decode(blob, mode, clean_exit)
+
+
+def run_isolated_worker(module: str, arguments, *, timeout: float = TIMEOUT_SECONDS,
+                        memory_limit: int = MEMORY_LIMIT_BYTES) -> tuple[bytes, bool]:
+    """Run a non-3MF archive worker in the same admission/child-process boundary.
+
+    Returns the raw framed output and whether the child exited cleanly. Used by
+    sliced-plate extraction, which streams generated files into a caller-owned
+    directory instead of returning package bytes to the API process.
+    """
+    ticket = reserve(timeout)
+    try:
+        return _run_worker_command(module, arguments, stdin_path=None,
+                                   ticket=ticket, memory_limit=memory_limit)
+    finally:
+        ticket.release()
+
+
+def read_frames(blob: bytes) -> dict:
+    """Public framed-output decoder for isolated archive workers."""
+    return _frames(blob)
 
 
 def analyze_blocking(path, *, mode: str = "upload", timeout: float = TIMEOUT_SECONDS, ticket: Optional[Ticket] = None,

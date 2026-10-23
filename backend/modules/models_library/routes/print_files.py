@@ -142,6 +142,7 @@ async def _extract_preview_mesh(path):
 async def upload_3mf(
     request: Request,
     file: UploadFile = File(...),
+    target_printer_id: Optional[int] = Form(None),
     current_user: dict = Depends(require_action("upload.upload", scope="write:models")), db: Session = Depends(get_db)
 ):
     """Upload and parse a print file (.3mf, .gcode, or .bgcode)."""
@@ -152,6 +153,15 @@ async def upload_3mf(
 
     if ext not in ALLOWED_PRINT_FILE_EXTENSIONS:
         raise HTTPException(status_code=400, detail="Only .3mf, .gcode, and .bgcode files are supported")
+
+    # An explicit association is operator intent, not a claim of slicer compatibility.
+    if type(target_printer_id) is not int:
+        target_printer_id = None  # direct internal callers do not resolve Form defaults
+    target_printer = _get_accessible_printer(db, target_printer_id, current_user) if target_printer_id is not None else None
+    if ext in {".gcode", ".bgcode"} and target_printer is None:
+        raise HTTPException(status_code=400, detail="Choose the printer this G-code was sliced for")
+    if ext == ".bgcode" and target_printer.api_type != "prusalink":
+        raise HTTPException(status_code=400, detail="Binary G-code requires a PrusaLink printer")
 
     # Enforce upload size limit (100 MB)
     MAX_UPLOAD_BYTES = 100 * 1024 * 1024
@@ -297,7 +307,7 @@ async def upload_3mf(
 
             # Persist file to disk
             import shutil
-            destination = _new_upload_path(file_id, file.filename)
+            destination = _new_upload_path(file_id, file.filename, root=getattr(db, "print_file_dir", None))
             with open(destination, "xb") as output:
                 stored_path = str(destination)
                 final_created = True
@@ -308,6 +318,9 @@ async def upload_3mf(
 
             # Bed/compatibility metadata, read by the isolated 3MF analysis
             meta = analysis.file_meta
+            if target_printer is not None:
+                meta["safety_facts"]["target_printer_id"] = target_printer.id
+                meta["safety_facts"]["target_printer_name"] = target_printer.name
             from modules.models_library.mesh_isolation import quick_print_readiness
             db.execute(text(
                 "UPDATE print_files SET bed_x_mm = :x, bed_y_mm = :y, "
@@ -352,6 +365,8 @@ async def upload_3mf(
                 "bed_y_mm": meta["bed_y_mm"],
                 "compatible_api_types": meta["compatible_api_types"],
                 "compatibility_facts": meta["safety_facts"],
+                "target_printer_id": target_printer.id if target_printer else None,
+                "target_printer_name": target_printer.name if target_printer else None,
                 "duplicate": duplicate_info,
             }
 
@@ -379,7 +394,7 @@ async def upload_3mf(
             })
 
             # Persist file to disk
-            destination = _new_upload_path(file_id, file.filename)
+            destination = _new_upload_path(file_id, file.filename, root=getattr(db, "print_file_dir", None))
             with open(destination, "xb") as output:
                 stored_path = str(destination)
                 final_created = True
@@ -388,25 +403,20 @@ async def upload_3mf(
             db.execute(text("UPDATE print_files SET stored_path = :p, original_filename = :fn WHERE id = :id"),
                        {"p": stored_path, "fn": file.filename, "id": file_id})
 
-            # Check for existing model or create new
-            existing_model = _own_upload_model(db, normalized_name, project_name, current_user.get("group_id"))
-
-            if existing_model:
-                model_id = existing_model[0]
-                is_new_model = False
-                db.execute(text("UPDATE print_files SET model_id = :mid WHERE id = :fid"),
-                           {"mid": model_id, "fid": file_id})
-            else:
-                model_id = execute_insert_returning_id(db, """
-                    INSERT INTO models (name, default_filament_type, print_file_id, category, org_id)
-                    VALUES (:name, 'PLA', :print_file_id, 'Uploaded', :org_id)
-                """, {"name": normalized_name, "print_file_id": file_id, "org_id": current_user.get("group_id")})
-                is_new_model = True
-                db.execute(text("UPDATE print_files SET model_id = :mid WHERE id = :fid"),
-                           {"mid": model_id, "fid": file_id})
+            # A pre-sliced import owns its exact executable file; same names never merge.
+            model_id = execute_insert_returning_id(db, """
+                INSERT INTO models (name, default_filament_type, print_file_id, category, org_id)
+                VALUES (:name, 'PLA', :print_file_id, 'Uploaded', :org_id)
+            """, {"name": normalized_name, "print_file_id": file_id, "org_id": current_user.get("group_id")})
+            is_new_model = True
+            db.execute(text("UPDATE print_files SET model_id = :mid WHERE id = :fid"),
+                       {"mid": model_id, "fid": file_id})
 
             # Extract bed/compatibility metadata and persist
             meta = pfm.extract_print_file_meta(stored_path, ext)
+            if target_printer is not None:
+                meta["safety_facts"]["target_printer_id"] = target_printer.id
+                meta["safety_facts"]["target_printer_name"] = target_printer.name
             db.execute(text(
                 "UPDATE print_files SET bed_x_mm = :x, bed_y_mm = :y, "
                 "compatible_api_types = :types, compatibility_facts_json = :facts WHERE id = :id"
@@ -445,6 +455,8 @@ async def upload_3mf(
                 "bed_y_mm": meta["bed_y_mm"],
                 "compatible_api_types": meta["compatible_api_types"],
                 "compatibility_facts": meta["safety_facts"],
+                "target_printer_id": target_printer.id if target_printer else None,
+                "target_printer_name": target_printer.name if target_printer else None,
                 "duplicate": duplicate_info,
             }
     except Exception as exc:
@@ -476,6 +488,138 @@ async def upload_3mf(
         # Clean up temp file
         os.unlink(tmp_path)
 
+
+
+@router.post("/print-files/import-plates")
+@limiter.limit("10/minute")
+async def import_sliced_plates(
+    request: Request,
+    file: UploadFile = File(...),
+    target_printer_id: int = Form(...),
+    current_user: dict = Depends(require_action("upload.upload", scope="write:models")),
+    db: Session = Depends(get_db),
+):
+    """Import every sliced 3MF plate separately; never dispatch printer hardware.
+
+    The archive is validated and extracted in the isolated 3MF worker before any
+    database write. Each plate then uses the ordinary G-code upload path through
+    one scoped batch session: inner commits only flush, and the request commits
+    once. Files live in that batch directory, which is removed only when the
+    transaction is known not to have committed.
+    """
+    import inspect
+    import shutil
+    from starlette.concurrency import run_in_threadpool
+    from modules.models_library.mesh_isolation import Busy
+    from modules.models_library.plate_import import extract_plates_into, PlateImportError
+    from modules.models_library.upload_storage import _upload_storage_root
+
+    filename = file.filename or ""
+    if os.path.splitext(filename)[1].lower() != ".3mf":
+        raise HTTPException(status_code=400, detail="Plate import requires a sliced .3mf file")
+    _get_accessible_printer(db, target_printer_id, current_user)
+    content = await file.read(100 * 1024 * 1024 + 1)
+    if len(content) > 100 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large. Maximum upload size is 100 MB.")
+
+    class BatchSession:
+        """Defer the uploader's commit to the request transaction only."""
+
+        def __init__(self, session, directory):
+            self.session = session
+            self.print_file_dir = directory
+            self.outcome_uncertain = False
+
+        def __getattr__(self, name):
+            return getattr(self.session, name)
+
+        def _flush(self):
+            try:
+                self.session.flush()
+            except BaseException:
+                # The request may already have committed part of this batch.
+                self.outcome_uncertain = True
+                raise
+
+        def commit(self):
+            self._flush()
+
+        def flush(self):
+            self._flush()
+
+    archive_path = extraction_dir = batch_dir = None
+    batch_db = None
+    retain_batch = False
+    keep_batch = False
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".3mf") as archive:
+            archive.write(content)
+            archive_path = archive.name
+        extraction_dir = tempfile.mkdtemp(prefix="odin-plate-extract-")
+        plates = await run_in_threadpool(extract_plates_into, archive_path, filename, extraction_dir)
+
+        batch_dir = tempfile.mkdtemp(prefix="plates-", dir=str(_upload_storage_root()))
+        batch_db = BatchSession(db, batch_dir)
+        uploader = inspect.unwrap(upload_3mf)
+        files = []
+        for plate in plates:
+            with plate.path.open("rb") as stream:
+                imported = await uploader(
+                    request=request,
+                    file=UploadFile(filename=plate.filename, file=stream),
+                    target_printer_id=target_printer_id,
+                    current_user=current_user,
+                    db=batch_db,
+                )
+            imported["source_plate"] = plate.number
+            imported["source_project"] = filename.replace("\\", "/").rsplit("/", 1)[-1]
+            files.append(imported)
+        try:
+            db.commit()
+        except BaseException:
+            retain_batch = True
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            raise HTTPException(
+                status_code=500,
+                detail="Plate import outcome is uncertain. Contact support before retrying.",
+            ) from None
+        keep_batch = True
+        return {
+            "files": files,
+            "plate_count": len(files),
+            "target_printer_id": target_printer_id,
+        }
+    except Busy as busy:
+        try:
+            db.rollback()
+        except Exception:
+            retain_batch = True
+        raise HTTPException(status_code=429, detail="3MF analysis is busy; try again shortly",
+                            headers={"Retry-After": str(busy.retry_after)}) from None
+    except PlateImportError as exc:
+        try:
+            db.rollback()
+        except Exception:
+            retain_batch = True
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except BaseException:
+        try:
+            db.rollback()
+        except Exception:
+            retain_batch = True
+        if batch_db is not None and batch_db.outcome_uncertain:
+            retain_batch = True
+        raise
+    finally:
+        if archive_path is not None:
+            os.unlink(archive_path)
+        if extraction_dir is not None:
+            shutil.rmtree(extraction_dir, ignore_errors=True)
+        if batch_dir is not None and not retain_batch and not keep_batch:
+            shutil.rmtree(batch_dir, ignore_errors=True)
 
 
 @router.post("/prints", status_code=status.HTTP_201_CREATED, tags=["Studio"])
@@ -538,6 +682,7 @@ async def submit_studio_print(
     uploaded = await upload_3mf(
         request=request,
         file=file,
+        target_printer_id=target_printer_id,
         current_user=current_user,
         db=db,
     )
@@ -564,6 +709,13 @@ async def submit_studio_print(
             db.execute(text('UPDATE print_files SET id=id WHERE id=:id'), {'id': file_id})
             row = accessible_preview_file(db, file_id, current_user)
             _assert_generic_payload(db, row)
+            from modules.models_library.target_printer import target_from_facts
+            try:
+                bound_printer_id = target_from_facts(row.compatibility_facts_json)
+            except ValueError:
+                raise HTTPException(400, 'Invalid file printer association; re-upload the file') from None
+            if bound_printer_id != target_printer_id:
+                raise HTTPException(409, 'Uploaded file is not associated with the selected printer')
             if row.job_id is not None or row.model_id != uploaded.get('model_id'):
                 raise HTTPException(409, 'Uploaded file changed; refresh before scheduling')
             if row.model_id is not None:

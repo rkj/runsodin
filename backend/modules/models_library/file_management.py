@@ -134,6 +134,15 @@ def schedule_generic_file(db, file_id, printer_id, actor):
         assert_generic_model_reference_allowed(db, row.model_id)
         if row.job_id is not None:
             raise HTTPException(409, 'File already scheduled')
+        from modules.models_library.target_printer import target_from_facts
+        try:
+            bound_printer_id = target_from_facts(row.compatibility_facts_json)
+        except ValueError:
+            raise HTTPException(400, 'Invalid file printer association; re-import the file') from None
+        if bound_printer_id is not None:
+            if printer_id is not None and printer_id != bound_printer_id:
+                raise HTTPException(400, 'This file is associated with a different printer; import a separately sliced file')
+            printer_id = bound_printer_id
         target = None
         if printer_id is not None:
             target = lock_queue_reference(db, 'printers', printer_id, TARGET_FIELDS)

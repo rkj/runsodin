@@ -203,7 +203,8 @@ def _get_next_scheduled_job(printer_id: int, *, generic_only: bool = False) -> O
                 text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text -- constant fragment: the SELECTED_PRINT_FILE_JOIN_SQL module constant; values are bound
                     f"""
                 SELECT j.id, j.item_name, j.printer_id, j.priority, j.queue_position, j.created_at,
-                       s.id AS education_submission_id, pf.stored_path, pf.original_filename
+                       s.id AS education_submission_id, pf.stored_path, pf.original_filename,
+                       pf.compatibility_facts_json
                 FROM jobs j
                 LEFT JOIN education_submissions s ON s.job_id=j.id
                 JOIN models m ON j.model_id=m.id
@@ -218,7 +219,18 @@ def _get_next_scheduled_job(printer_id: int, *, generic_only: bool = False) -> O
                 {"pid": printer_id},
             ).fetchall()
             from modules.jobs.services import education_order, ordered_waiting
-            candidates = [dict(row._mapping) for row in rows]
+            from modules.models_library.target_printer import target_from_facts
+            candidates = []
+            for row in rows:
+                candidate = dict(row._mapping)
+                try:
+                    bound = target_from_facts(candidate.pop("compatibility_facts_json"))
+                except ValueError:
+                    log.error("[dispatch] Job %s has an invalid printer association; not dispatching", candidate.get("id"))
+                    continue
+                if bound is not None and bound != printer_id:
+                    continue
+                candidates.append(candidate)
             candidates = education_order(candidates,
                 {row['id'] for row in candidates if row['education_submission_id'] is not None},
                 lambda row, key: row[key])
@@ -760,8 +772,20 @@ def dispatch_job(printer_id: int, job_id: int) -> tuple[bool, str]:
 
     # Determine remote filename
     remote_filename = job.get("original_filename") or os.path.basename(stored_path)
-    if not remote_filename.endswith((".3mf", ".gcode", ".bgcode")):
+    if not remote_filename.lower().endswith((".3mf", ".gcode", ".bgcode")):
         remote_filename += ".3mf"  # assume 3mf if no extension
+
+    # Preserve the exact printer association even if a job was reassigned elsewhere.
+    from modules.models_library.target_printer import target_from_facts
+    try:
+        bound_printer_id = target_from_facts(job.get("compatibility_facts_json"))
+    except ValueError:
+        return False, "Invalid file printer association; re-import the file"
+    if bound_printer_id is not None and bound_printer_id != printer_id:
+        return False, (
+            "This file was imported for another printer; use the associated printer "
+            "or import a separately sliced file"
+        )
 
     # Load printer credentials
     creds = _get_printer_info(printer_id)
@@ -778,6 +802,8 @@ def dispatch_job(printer_id: int, job_id: int) -> tuple[bool, str]:
 
     if api_type not in {"bambu", "moonraker", "prusalink"}:
         return False, f"Dispatch not supported for printer type '{api_type}'"
+    if stored_path.lower().endswith(".bgcode") and api_type != "prusalink":
+        return False, "Binary G-code requires a PrusaLink printer"
 
     print_options,options_error=_validated_print_options(job,creds,stored_path,payload_sha256)
     if options_error:return False,options_error

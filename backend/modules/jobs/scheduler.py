@@ -363,6 +363,8 @@ class Scheduler:
         plans = []
         messages = {
             "unknown_quantity": "Set the job quantity before scheduling. The job remains queued.",
+            "invalid_binding": "This file has an invalid printer association. Re-import it before scheduling.",
+            "binding_mismatch": "The job's printer differs from the printer this file was imported for. Choose the associated printer or import a separately sliced file.",
             "no_fit": "No compatible printer has capacity within the scheduling horizon. Check job requirements and printer availability.",
             "no_active_printers": "No active printers are available. Check which printers are enabled; the job remains queued.",
             "policy_unavailable": "The Education scheduling policy is unavailable. Check server diagnostics before scheduling.",
@@ -545,6 +547,15 @@ class Scheduler:
                 continue
             education_context = None
             approved_printer_id = None
+            # A pre-sliced import belongs to the exact printer selected at import.
+            from modules.models_library.target_printer import job_target_printer
+            try:
+                bound_printer_id = job_target_printer(db, job.id)
+            except ValueError:
+                result.skipped_count += 1
+                skipped.append((job.id, "invalid_binding"))
+                result.errors.append(f"Could not schedule job {job.id}: invalid printer association")
+                continue
             if self._is_education_job(db, job.id):
                 if education_policy is None:
                     result.skipped_count += 1
@@ -577,7 +588,15 @@ class Scheduler:
                         f"Could not schedule Education job {job.id}: policy denied"
                     )
                     continue
-                approved_printer_id = int(education_context["approved_printer_id"])
+                education_printer_id = int(education_context["approved_printer_id"])
+                if bound_printer_id is not None and education_printer_id != bound_printer_id:
+                    result.skipped_count += 1
+                    skipped.append((job.id, "binding_mismatch"))
+                    result.errors.append(
+                        f"Could not schedule job {job.id}: file printer association differs from approval"
+                    )
+                    continue
+                approved_printer_id = education_printer_id
                 compatibility = evaluate_submission_compatibility(
                     db,
                     org_id=int(education_context["org_id"]),
@@ -618,6 +637,14 @@ class Scheduler:
                     result.errors.append(
                         f"Could not schedule job {job.id}: pinned printer {pin if pin is not None else ''} is unavailable ({issue})")
                     continue
+                if bound_printer_id is not None:
+                    if pin is not None and pin != bound_printer_id:
+                        result.skipped_count += 1
+                        skipped.append((job.id, "binding_mismatch"))
+                        result.errors.append(
+                            f"Could not schedule job {job.id}: file printer association differs from the pinned printer")
+                        continue
+                    approved_printer_id = bound_printer_id
 
             payload_snapshot = None
             if education_context is None:

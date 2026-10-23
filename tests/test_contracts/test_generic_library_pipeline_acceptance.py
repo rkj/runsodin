@@ -24,7 +24,9 @@ def test_uploaded_file_is_visible_model_and_dispatch_validated_queued_job(upload
     review_db.commit()
     headers=issue(['write:models','read:models','write:jobs','read:jobs'])
     payload=Path('tests/fixtures/telemetry/a1-petg-source-sanitized.3mf').read_bytes() if extension=='.3mf' else b'; printer_model = MK4\nG28\n'
-    response=client.post('/print-files/upload',headers=headers,files={'file':('Owned pipeline'+extension,payload,'application/octet-stream')})
+    response=client.post('/print-files/upload',headers=headers,
+                         data={'target_printer_id':'46'} if extension=='.gcode' else {},
+                         files={'file':('Owned pipeline'+extension,payload,'application/octet-stream')})
     assert response.status_code==200,response.text
     uploaded=response.json()
     library=client.get('/models',headers=headers)

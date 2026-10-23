@@ -6,7 +6,7 @@ import clsx from 'clsx'
 import toast from 'react-hot-toast'
 import ConfirmModal from '../../components/shared/ConfirmModal'
 
-import { printFiles, getApprovalSetting } from '../../api'
+import { printFiles, printers, getApprovalSetting } from '../../api'
 import { models as modelsApi } from '../../api'
 import { getCurrentUser } from '../../permissions'
 
@@ -24,7 +24,7 @@ function DropZone({ onFileSelect, isUploading, uploadProgress }) {
       if (/\.(3mf|gcode|bgcode)$/i.test(file.name)) {
         onFileSelect(file)
       } else {
-        toast.error('Supported files: .3mf, .gcode, .bgcode')
+        toast.error('Only .3mf, .gcode, and .bgcode files are supported')
       }
     }
   }, [onFileSelect])
@@ -71,7 +71,7 @@ function DropZone({ onFileSelect, isUploading, uploadProgress }) {
               </>
             ) : (
               <>
-                <p className="text-base md:text-lg font-medium">Drop .3mf or G-code file here</p>
+                <p className="text-base md:text-lg font-medium">Drop a .3mf, .gcode, or .bgcode file here</p>
                 <p className="text-[var(--brand-text-muted)] text-sm mt-1">or click to browse</p>
               </>
             )}
@@ -95,7 +95,7 @@ function FilamentBadge({ filament }) {
 function UploadSuccess({ data, onUploadAnother, onViewLibrary, onScheduleNow, onUpdateObjects, submitForApproval, onSaveQuantity }) {
   const [quickPrinted, setQuickPrinted] = useState(false)
   const quickPrintMut = useMutation({
-    mutationFn: () => modelsApi.schedule(data.model_id),
+    mutationFn: () => modelsApi.schedule(data.model_id, data.target_printer_id || undefined),
     onSuccess: () => { setQuickPrinted(true); toast.success('Job queued') },
     onError: (err) => toast.error('Quick print failed: ' + err.message),
   })
@@ -132,6 +132,7 @@ function UploadSuccess({ data, onUploadAnother, onViewLibrary, onScheduleNow, on
           </div>
 
           <h2 className="text-xl md:text-2xl font-display font-bold mb-4">{data.project_name}</h2>
+          {data.target_printer_name && <p className="mb-4">Associated printer: {data.target_printer_name}. Importing does not start a print.</p>}
 
           <div className="grid grid-cols-2 gap-3 md:gap-4 mb-4">
             <div className="flex items-center gap-2 md:gap-3">
@@ -145,14 +146,14 @@ function UploadSuccess({ data, onUploadAnother, onViewLibrary, onScheduleNow, on
               <Scale size={18} className="text-[var(--brand-text-muted)] shrink-0" />
               <div>
                 <p className="text-xs text-[var(--brand-text-muted)]">Weight</p>
-                <p className="font-medium text-sm">{data.total_weight_grams}g</p>
+                <p className="font-medium text-sm">{data.total_weight_grams != null ? `${data.total_weight_grams}g` : 'Unknown'}</p>
               </div>
             </div>
             <div className="flex items-center gap-2 md:gap-3">
               <Layers size={18} className="text-[var(--brand-text-muted)] shrink-0" />
               <div>
                 <p className="text-xs text-[var(--brand-text-muted)]">Layers</p>
-                <p className="font-medium text-sm">{data.layer_count}</p>
+                <p className="font-medium text-sm">{data.layer_count ?? 'Unknown'}</p>
               </div>
             </div>
             <div className="flex items-center gap-2 md:gap-3">
@@ -227,11 +228,11 @@ function UploadSuccess({ data, onUploadAnother, onViewLibrary, onScheduleNow, on
             onClick={() => quickPrintMut.mutate()}
             disabled={quickPrintBlocked || quickPrintMut.isPending || quickPrinted}
             className="flex items-center gap-2 px-4 py-2 rounded-md bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-medium transition-colors text-sm"
-            title={quickPrintBlocked ? quickPrintReason : 'Auto-assign to an available printer and queue immediately'}
+            title={quickPrintBlocked ? quickPrintReason : 'Create a queued job; printing requires a separate dispatch'}
             aria-describedby={quickPrintBlocked ? 'quick-print-blocked-reason' : undefined}
           >
             <Zap size={16} />
-            {quickPrinted ? 'Queued!' : quickPrintMut.isPending ? 'Queuing...' : 'Quick Print'}
+            {quickPrinted ? 'Queued!' : quickPrintMut.isPending ? 'Queuing...' : data.target_printer_id ? 'Queue for selected printer' : 'Quick Print'}
           </button>
         )}
         <button onClick={onScheduleNow} className="flex items-center gap-2 px-4 py-2 rounded-md bg-green-600 hover:bg-green-500 text-white font-medium transition-colors text-sm" title="Choose a printer and set priority before scheduling">
@@ -304,6 +305,8 @@ export default function Upload() {
   const navigate = useNavigate()
   const [uploadedFile, setUploadedFile] = useState(null)
   const [uploadProgress, setUploadProgress] = useState(null)
+  const [targetPrinterId, setTargetPrinterId] = useState('')
+  const { data: availablePrinters = [] } = useQuery({ queryKey: ['printers'], queryFn: () => printers.list(true) })
 
   // Sellable pieces (checked objects) persist as models.quantity_per_bed for a NEW model only.
   // The server stores the default checked count; toggles re-save, coalesced into one PATCH,
@@ -363,10 +366,11 @@ export default function Upload() {
           }
         })
         xhr.addEventListener('error', () => reject(new Error('Network error')))
-        xhr.open('POST', '/api/print-files/upload')
+        xhr.open('POST', /\.3mf$/i.test(file.name) && targetPrinterId ? '/api/print-files/import-plates' : '/api/print-files/upload')
         xhr.withCredentials = true  // send session cookie
         const formData = new FormData()
         formData.append('file', file)
+        if (targetPrinterId) formData.append('target_printer_id', targetPrinterId)
         xhr.send(formData)
       })
     },
@@ -388,7 +392,13 @@ export default function Upload() {
     },
   })
 
-  const handleFileSelect = (file) => uploadMutation.mutate(file)
+  const handleFileSelect = (file) => {
+    if (/\.(gcode|bgcode)$/i.test(file.name) && !targetPrinterId) {
+      toast.error('Choose the printer this G-code was sliced for before uploading')
+      return
+    }
+    uploadMutation.mutate(file)
+  }
 
   return (
     <div className="p-4 md:p-6">
@@ -397,25 +407,39 @@ export default function Upload() {
           <UploadIcon className="text-[var(--brand-primary)]" size={24} />
           <div>
             <h1 className="text-xl md:text-2xl font-display font-bold">Upload Print File</h1>
-            <p className="text-[var(--brand-text-muted)] text-sm mt-1">Upload .3mf files to add to your model library</p>
+            <p className="text-[var(--brand-text-muted)] text-sm mt-1">Upload pre-sliced .gcode, .bgcode, or .3mf files to your model library</p>
           </div>
         </div>
       </div>
 
       {uploadedFile ? (
-        <UploadSuccess
-          data={uploadedFile}
-          onUploadAnother={() => setUploadedFile(null)}
-          onViewLibrary={() => navigate('/models')}
-          onUpdateObjects={(newObjects) => {
-            setUploadedFile(prev => ({ ...prev, objects: newObjects }))
-            if (uploadedFile?.is_new_model === true) saveQuantity(uploadedFile?.model_id, newObjects)
-          }}
-          onScheduleNow={() => navigate(`/models?schedule=${uploadedFile.model_id}`)}
-          submitForApproval={showSubmitForApproval}
-        />
+        <div className="space-y-4">
+          {(uploadedFile.files || [uploadedFile]).map(importedFile => (
+            <UploadSuccess
+              key={importedFile.id}
+              data={importedFile}
+              onUploadAnother={() => setUploadedFile(null)}
+              onViewLibrary={() => navigate('/models')}
+              onUpdateObjects={(newObjects) => {
+                setUploadedFile(prev => prev.files
+                  ? { ...prev, files: prev.files.map(item => item.id === importedFile.id ? { ...item, objects: newObjects } : item) }
+                  : { ...prev, objects: newObjects })
+                if (importedFile?.is_new_model === true) saveQuantity(importedFile?.model_id, newObjects)
+              }}
+              onScheduleNow={() => navigate(`/models?schedule=${importedFile.model_id}`)}
+              submitForApproval={showSubmitForApproval}
+            />
+          ))}
+        </div>
       ) : (
         <>
+          <label className="block mb-4">Printer this file was sliced for
+            <select aria-label="Printer this file was sliced for" value={targetPrinterId} onChange={e => setTargetPrinterId(e.target.value)} disabled={uploadMutation.isPending} className="block mt-2 p-2 rounded-md bg-[var(--brand-input-bg)]">
+              <option value="">Choose a printer (required for G-code)</option>
+              {availablePrinters.filter(p => p.is_active).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <span className="block text-sm mt-2">Use the correct slicer profile for this printer. With a printer selected, sliced 3MF plates are imported separately. Uploading only adds files to the library.</span>
+          </label>
           <DropZone onFileSelect={handleFileSelect} isUploading={uploadMutation.isPending} uploadProgress={uploadProgress} />
           {uploadMutation.isError && (
             <div className="mt-4 bg-red-900/30 border border-red-700 rounded-md p-4">

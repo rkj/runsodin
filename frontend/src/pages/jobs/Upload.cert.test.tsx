@@ -9,7 +9,7 @@ const api = vi.hoisted(() => ({ update: vi.fn() }))
 vi.mock('../../api', () => ({
   filaments: { combined: vi.fn().mockResolvedValue([]) }, printFiles: { list: vi.fn().mockResolvedValue([]) }, getApprovalSetting: vi.fn().mockResolvedValue({ require_job_approval: false }),
   models: { update: api.update, schedule: vi.fn(), getVariants: vi.fn(), scheduleOptions: vi.fn(), listWithPricing: vi.fn().mockResolvedValue([]) },
-  printers: { list: vi.fn().mockResolvedValue([]) },
+  printers: { list: vi.fn().mockResolvedValue([{ id: 42, name: 'Fixture printer', is_active: true }]) },
 }))
 vi.mock('../../permissions', () => ({ getCurrentUser: () => ({ id: 3, role: 'operator' }), canDo: () => true }))
 vi.mock('../../contexts/OrgContext', () => ({ useOrg: () => ({ orgId: 1 }) }))
@@ -82,12 +82,16 @@ test('F05-5.1-04 unchecking every object is refused visibly instead of sending a
 test.each(['gcode', 'bgcode'])('accepts .%s from picker and drop', async extension => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
   const view = render(<QueryClientProvider client={client}><MemoryRouter><Upload /></MemoryRouter></QueryClientProvider>)
+  expect(view.container.querySelector('input[type=file]')!.getAttribute('accept')).toContain('.' + extension)
+  await screen.findByRole('option', { name: 'Fixture printer' })
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: '42' } })
   const input = view.container.querySelector('input[type=file]')!
-  expect(input.getAttribute('accept')).toContain('.' + extension)
   fireEvent.change(input, { target: { files: [new File(['G28'], 'test.' + extension)] } })
   await screen.findByText('Objects on Plate')
   view.unmount()
   const dropped = render(<QueryClientProvider client={client}><MemoryRouter><Upload /></MemoryRouter></QueryClientProvider>)
+  await screen.findByRole('option', { name: 'Fixture printer' })
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: '42' } })
   const dropInput = dropped.container.querySelector('input[type=file]')!
   fireEvent.drop(dropInput.parentElement!, { dataTransfer: { files: [new File(['G28'], 'test.' + extension.toUpperCase())] } })
   expect(await screen.findByText('Objects on Plate')).toBeInTheDocument()

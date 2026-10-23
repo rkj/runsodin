@@ -7,7 +7,7 @@ from sqlalchemy import text
 from tests.test_contracts.test_api_token_delegation_behavior import token_client,review_db
 
 @pytest.fixture
-def upload_client(token_client,tmp_path,monkeypatch):
+def upload_client(token_client,review_db,tmp_path,monkeypatch):
  import shutil
  from modules.models_library.routes import print_files
  from modules.models_library import print_file_meta
@@ -15,12 +15,19 @@ def upload_client(token_client,tmp_path,monkeypatch):
  print_files.limiter._storage.reset()
  storage=tmp_path/'owned-upload-storage';storage.mkdir()
  monkeypatch.setenv('PRINT_FILE_STORAGE_ROOT',str(storage))
+ if not review_db.execute(text('SELECT 1 FROM printers WHERE id=46')).first():
+  review_db.execute(text("INSERT INTO printers (id,name,api_type,machine_type,is_active,org_id) VALUES (46,'Owned PrusaLink','prusalink','MK4',1,1)"));review_db.commit()
  return TestClient(client.app,raise_server_exceptions=False),issue,storage
 
 GCODE=b'; Synthetic safe metadata fixture\n; printer_model = MK4\nG28\n'
 
-def upload(client,headers,filename,content):
- return client.post('/print-files/upload',headers=headers,files={'file':(filename,content,'application/octet-stream')})
+def upload(client,headers,filename,content,target_printer_id=None):
+ # Raw G-code imports name the exact physical printer; binary G-code needs PrusaLink.
+ if target_printer_id is None:
+  target_printer_id = 46 if filename.lower().endswith('.bgcode') else 9
+ return client.post('/print-files/upload',headers=headers,
+                    data={'target_printer_id':str(target_printer_id)},
+                    files={'file':(filename,content,'application/octet-stream')})
 
 @pytest.mark.parametrize('extension',['.gcode','.bgcode','.3mf'])
 def test_upload_actor_ownership_and_exact_hash_persist_for_all_formats(upload_client,review_db,extension):
@@ -44,13 +51,14 @@ def test_duplicate_response_never_reveals_foreign_file(upload_client,review_db,e
  if should_warn:assert duplicate=={'duplicate':True,'existing_file_id':201,'existing_file_name':'Synthetic private duplicate'}
  else:assert duplicate is None and 'Synthetic private duplicate' not in response.text
 
-@pytest.mark.parametrize('existing_org,attach',[(1,True),(2,False),(None,False)])
-def test_same_name_upload_only_attaches_to_actors_own_model(upload_client,review_db,existing_org,attach):
+@pytest.mark.parametrize('existing_org',[1,2,None])
+def test_same_name_raw_gcode_always_creates_a_distinct_owned_model(upload_client,review_db,existing_org):
  client,issue,storage=upload_client
  review_db.execute(text("INSERT INTO models(id,name,org_id) VALUES(201,'Synthetic same name',:org)"),{'org':existing_org});review_db.commit()
  response=upload(client,issue(['write:models']),'Synthetic same name.gcode',GCODE)
  assert response.status_code==200,response.text
- assert (response.json()['model_id']==201) is attach
+ # A pre-sliced import owns its exact executable artifact; same names never merge.
+ assert response.json()['model_id']!=201
  assert review_db.execute(text('SELECT org_id FROM models WHERE id=:id'),{'id':response.json()['model_id']}).scalar_one()==1
 
 @pytest.mark.parametrize('scopes',[['read:models'],['write:jobs'],['read:printers']])

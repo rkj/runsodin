@@ -44,6 +44,14 @@ def printer(**kw):
     sql("INSERT INTO filament_slots(printer_id,slot_number,filament_type) VALUES (:i,1,'PLA')", i=i)
     return i
 
+def gcode_printer():
+    i = next(SEQ)
+    sql("INSERT INTO printers(id,name,model,machine_type,is_active,api_type,org_id,slot_count,tags,timelapse_enabled,shared) "
+        "VALUES (:i,:n,'Snapmaker U1','Snapmaker U1',1,'moonraker',1,1,'[]',0,0)",
+        i=i, n=f"MX gcode printer {i}")
+    sql("INSERT INTO filament_slots(printer_id,slot_number,filament_type) VALUES (:i,1,'PLA')", i=i)
+    return i
+
 def job(status="pending", printer_id=None, submitted_by=None, user="operator"):
     i = next(SEQ)
     sql("INSERT INTO jobs(id,item_name,status,quantity,duration_hours,priority,hold,charged_to_org_id,charged_to_user_id,"
@@ -81,7 +89,8 @@ def alert(user):
     sql("INSERT INTO alerts(user_id,alert_type,severity,title,is_read,is_dismissed) VALUES (:u,'print_failed','info','MX',0,0)", u=USERS[user])
 
 def print_file():
-    r = C["operator"].post("/api/print-files/upload", files={"file": (f"mx-fixture-{next(SEQ)}.gcode", GCODE, "application/octet-stream")})
+    r = C["operator"].post("/api/print-files/upload", data={"target_printer_id": str(gcode_printer())},
+                           files={"file": (f"mx-fixture-{next(SEQ)}.gcode", GCODE, "application/octet-stream")})
     assert r.status_code < 300, r.text
     return r.json()["id"]
 
@@ -144,7 +153,7 @@ CASES = {
     "spools.edit": lambda u: ("patch", f"/api/spools/{spool()}", {"json": {"notes": "MX"}}),
     "spools.delete": lambda u: ("delete", f"/api/spools/{spool()}", {}),
     "timeline.move": lambda u: ("patch", f"/api/jobs/{job()}/move", {"json": {"printer_id": printer(), "scheduled_start": f"2026-11-{next(SEQ) % 28 + 1:02d}T10:00:00Z"}}),
-    "upload.upload": lambda u: ("post", "/api/print-files/upload", {"files": {"file": (f"mx-{next(SEQ)}.gcode", GCODE, "application/octet-stream")}}),
+    "upload.upload": lambda u: ("post", "/api/print-files/upload", {"data": {"target_printer_id": str(printer())}, "files": {"file": (f"mx-{next(SEQ)}.gcode", GCODE, "application/octet-stream")}}),
     "upload.schedule": lambda u: ("post", f"/api/print-files/{print_file()}/schedule", {"json": {}}),
     "upload.delete": lambda u: ("delete", f"/api/print-files/{print_file()}", {}),
     "maintenance.log": lambda u: ("post", "/api/maintenance/logs", {"json": {"printer_id": printer(), "task_name": "MX clean", "notes": "MX"}}),

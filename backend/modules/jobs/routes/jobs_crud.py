@@ -42,6 +42,22 @@ logger = log
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
 
 
+def _assert_model_printer_binding(db, model_id, printer_id):
+    """Reject an explicit printer choice that contradicts the file's import binding."""
+    if model_id is None or printer_id is None:
+        return
+    from modules.models_library.target_printer import model_target_printer
+    try:
+        bound_printer_id = model_target_printer(db, model_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file printer association; re-import the file") from None
+    if bound_printer_id is not None and bound_printer_id != printer_id:
+        raise HTTPException(
+            status_code=400,
+            detail="This file is associated with a different printer; import a separately sliced file",
+        )
+
+
 from modules.jobs.queue_creation import _stage_prospective_queue_job, _stage_prospective_queue_values, _stage_queue_entries, _deliver_queue_entries, JobBatchRequest, JobReorderRequest
 
 from modules.jobs.pinning import _pin_checked_changes, _target_columns, _target_printer_id  # noqa: E402,F401  (validated pin helpers)
@@ -104,7 +120,9 @@ def create_jobs_bulk(jobs: List[JobCreate], current_user: dict = Depends(require
     pinned = []
     for job in jobs:
         assert_generic_model_reference_allowed(db, job.model_id)
-        pinned.append(_target_printer_id(db, current_user, job.printer_id, job.target_type, job.target_filter))
+        pinned_id = _target_printer_id(db, current_user, job.printer_id, job.target_type, job.target_filter)
+        _assert_model_printer_binding(db, job.model_id, pinned_id)
+        pinned.append(pinned_id)
     charge_job_quota(db, current_user, len(jobs))
     db_jobs = []
     for job, pinned_printer_id in zip(jobs, pinned):
@@ -173,6 +191,8 @@ def create_jobs_batch(
         if model is None or not check_org_access(current_user, model.org_id):
             raise HTTPException(status_code=404, detail="Model not found")
     assert_generic_model_reference_allowed(db, body.model_id)
+    for printer_identifier in body.printer_ids:
+        _assert_model_printer_binding(db, body.model_id, printer_identifier)
 
     # Validate all printers exist and are accessible
     printers = db.query(Printer).filter(Printer.id.in_(body.printer_ids)).all()
@@ -355,6 +375,7 @@ def create_job(
 
     assert_generic_model_reference_allowed(db, job.model_id)
     pinned_printer_id = _target_printer_id(db, current_user, job.printer_id, job.target_type, job.target_filter)
+    _assert_model_printer_binding(db, job.model_id, pinned_printer_id)
     # Calculate cost if model is linked
     estimated_cost, suggested_price, _ = (None, None, None)
     if job.model_id:
