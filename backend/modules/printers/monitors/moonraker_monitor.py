@@ -694,8 +694,9 @@ class MoonrakerMonitor:
             with engine.begin() as conn:
                 for slot in slots:
                     slot_num = slot.gate + 1  # DB uses 1-based slot numbers
-                    material_key = (slot.material or "").upper()
-                    filament_type = _MATERIAL_MAP.get(material_key, material_key or "EMPTY")
+                    from core.base import FilamentType
+                    filament_type = (FilamentType.from_bambu_code(slot.material).value
+                                     if slot.material else FilamentType.EMPTY.value)
                     color_hex = slot.color_hex[:6] if slot.color_hex else None
                     color_name = slot.name or slot.material or None
 
@@ -878,6 +879,8 @@ class MoonrakerMonitor:
         estimate fallback. Multi-spool attribution requires explicit mapping;
         never guess which spool supplied a multi-material print.
         """
+        if os.getenv("MOONRAKER_FILAMENT_DEDUCTION", "true").strip().lower() != "true":
+            return
         import math
         job = conn.execute(text("""
             SELECT j.printer_id,j.charged_to_org_id,pf.filament_weight_grams,pf.filaments_json
