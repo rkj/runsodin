@@ -1,8 +1,8 @@
 # ============================================================
 # O.D.I.N. — Orchestrated Dispatch & Inventory Network
 # Single-container Docker image (Home Assistant pattern)
-# 
-# Contains: FastAPI backend, React frontend (static), 
+#
+# Contains: FastAPI backend, React frontend (static),
 #           MQTT monitor, Moonraker monitor, go2rtc
 # ============================================================
 

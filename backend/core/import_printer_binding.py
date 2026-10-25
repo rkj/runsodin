@@ -60,3 +60,21 @@ def job_target_printer(db, job_id):
         {"id": job_id},
     ).fetchone()
     return target_from_facts(row[0]) if row else None
+
+
+def assert_model_printer_binding(db, model_id, printer_id):
+    """Reject an explicit printer choice that contradicts the file's import binding."""
+    if model_id is None or printer_id is None:
+        return
+    from fastapi import HTTPException
+    try:
+        bound_printer_id = model_target_printer(db, model_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid file printer association; re-import the file") from None
+    if bound_printer_id is not None and bound_printer_id != printer_id:
+        raise HTTPException(
+            status_code=400,
+            detail="This file is associated with a different printer; import a separately sliced file",
+        )
+
+

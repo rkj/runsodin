@@ -42,21 +42,7 @@ logger = log
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
 
 
-def _assert_model_printer_binding(db, model_id, printer_id):
-    """Reject an explicit printer choice that contradicts the file's import binding."""
-    if model_id is None or printer_id is None:
-        return
-    from core.import_printer_binding import model_target_printer
-    try:
-        bound_printer_id = model_target_printer(db, model_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid file printer association; re-import the file") from None
-    if bound_printer_id is not None and bound_printer_id != printer_id:
-        raise HTTPException(
-            status_code=400,
-            detail="This file is associated with a different printer; import a separately sliced file",
-        )
-
+from core.import_printer_binding import assert_model_printer_binding as _assert_model_printer_binding
 
 from modules.jobs.queue_creation import _stage_prospective_queue_job, _stage_prospective_queue_values, _stage_queue_entries, _deliver_queue_entries, JobBatchRequest, JobReorderRequest
 

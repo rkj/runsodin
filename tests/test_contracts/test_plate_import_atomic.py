@@ -139,7 +139,8 @@ def plate_route(review_db, tmp_path, monkeypatch):
     storage.mkdir()
     monkeypatch.setenv("PRINT_FILE_STORAGE_ROOT", str(storage))
     from modules.models_library.routes import print_files
-    route = inspect.unwrap(print_files.import_sliced_plates)
+    from modules.models_library.routes import plate_imports
+    route = inspect.unwrap(plate_imports.import_sliced_plates)
     request = Request({"type": "http", "method": "POST", "path": "/api/print-files/import-plates",
                        "headers": [], "client": ("127.0.0.1", 1), "server": ("localhost", 80),
                        "scheme": "http"})
