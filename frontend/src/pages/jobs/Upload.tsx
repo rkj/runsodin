@@ -219,7 +219,7 @@ function UploadSuccess({ data, onUploadAnother, onViewLibrary, onScheduleNow, on
         </div>
       </div>
 
-      <div className="flex justify-end gap-3 p-3 md:p-4 bg-[var(--brand-content-bg)] border-t border-[var(--brand-card-border)]">
+      <div className="flex flex-wrap justify-start md:justify-end gap-3 p-3 md:p-4 [&>button]:min-h-11 bg-[var(--brand-content-bg)] border-t border-[var(--brand-card-border)]">
         <button onClick={onUploadAnother} className="flex items-center gap-2 px-4 py-2 rounded-md border border-[var(--brand-card-border)] hover:bg-[var(--brand-input-bg)] transition-colors text-sm">
           <UploadIcon size={16} /> Upload Another
         </button>
