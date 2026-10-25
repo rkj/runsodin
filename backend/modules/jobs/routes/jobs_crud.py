@@ -46,7 +46,7 @@ def _assert_model_printer_binding(db, model_id, printer_id):
     """Reject an explicit printer choice that contradicts the file's import binding."""
     if model_id is None or printer_id is None:
         return
-    from modules.models_library.target_printer import model_target_printer
+    from core.import_printer_binding import model_target_printer
     try:
         bound_printer_id = model_target_printer(db, model_id)
     except ValueError:

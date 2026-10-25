@@ -548,7 +548,7 @@ class Scheduler:
             education_context = None
             approved_printer_id = None
             # A pre-sliced import belongs to the exact printer selected at import.
-            from modules.models_library.target_printer import job_target_printer
+            from core.import_printer_binding import job_target_printer
             try:
                 bound_printer_id = job_target_printer(db, job.id)
             except ValueError:

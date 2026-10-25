@@ -219,7 +219,7 @@ def _get_next_scheduled_job(printer_id: int, *, generic_only: bool = False) -> O
                 {"pid": printer_id},
             ).fetchall()
             from modules.jobs.services import education_order, ordered_waiting
-            from modules.models_library.target_printer import target_from_facts
+            from core.import_printer_binding import target_from_facts
             candidates = []
             for row in rows:
                 candidate = dict(row._mapping)
@@ -776,7 +776,7 @@ def dispatch_job(printer_id: int, job_id: int) -> tuple[bool, str]:
         remote_filename += ".3mf"  # assume 3mf if no extension
 
     # Preserve the exact printer association even if a job was reassigned elsewhere.
-    from modules.models_library.target_printer import target_from_facts
+    from core.import_printer_binding import target_from_facts
     try:
         bound_printer_id = target_from_facts(job.get("compatibility_facts_json"))
     except ValueError:

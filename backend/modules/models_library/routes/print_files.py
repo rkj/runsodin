@@ -709,7 +709,7 @@ async def submit_studio_print(
             db.execute(text('UPDATE print_files SET id=id WHERE id=:id'), {'id': file_id})
             row = accessible_preview_file(db, file_id, current_user)
             _assert_generic_payload(db, row)
-            from modules.models_library.target_printer import target_from_facts
+            from core.import_printer_binding import target_from_facts
             try:
                 bound_printer_id = target_from_facts(row.compatibility_facts_json)
             except ValueError:

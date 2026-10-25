@@ -255,7 +255,7 @@ def schedule_from_model(
         raise HTTPException(409, "Selected print file changed; refresh scheduling options")
 
     # A pre-sliced import belongs to the exact printer selected at import.
-    from modules.models_library.target_printer import target_from_facts
+    from core.import_printer_binding import target_from_facts
     try:
         bound_printer_id = target_from_facts(file.compatibility_facts_json) if file is not None else None
     except ValueError:

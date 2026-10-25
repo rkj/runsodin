@@ -134,7 +134,7 @@ def schedule_generic_file(db, file_id, printer_id, actor):
         assert_generic_model_reference_allowed(db, row.model_id)
         if row.job_id is not None:
             raise HTTPException(409, 'File already scheduled')
-        from modules.models_library.target_printer import target_from_facts
+        from core.import_printer_binding import target_from_facts
         try:
             bound_printer_id = target_from_facts(row.compatibility_facts_json)
         except ValueError:
