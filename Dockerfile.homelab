@@ -47,7 +47,7 @@ FROM node:20-slim@sha256:c6585df72c34172bebd8d36abed961e231d7d3b5cee2e01294c4495
 
 WORKDIR /build/frontend
 COPY frontend/package*.json ./
-RUN npm ci --no-audit --no-fund
+RUN npm ci --no-audit --no-fund --maxsockets=5 --fetch-timeout=60000 --fetch-retries=2
 COPY frontend/ ./
 COPY design/ /build/design/
 COPY VERSION /build/VERSION
