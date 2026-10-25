@@ -129,3 +129,13 @@ inventory, telemetry observations, consumption accounting and dispatch decisions
 remain independent of this feed. In 2.x, organization and shared-printer visibility
 are applied before enrichment; external IDs are exposed only through those
 authorized printer responses.
+
+### Local Unix socket transport
+
+The maintained deployment also accepts `FILAMENT_LEDGER_URL=unix:///absolute/path/feed.sock`.
+It sends only `GET /api/filament-display` over HTTPX's Unix-socket transport, with
+no TCP/DNS fallback. Authorities, query strings, fragments and parent traversal
+are rejected. The same deadline, response limit, cache and ownership rules apply.
+The socket must be mounted read-only into Odin and provided by a trusted local
+bridge that permits only this GET route. This does not expose the provider on a
+LAN interface or add a second inventory writer.

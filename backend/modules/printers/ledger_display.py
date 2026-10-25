@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
+from pathlib import PurePosixPath
+from urllib.parse import urlsplit
+
 import json
 import logging
 import math
@@ -131,18 +135,28 @@ def _fetch_payload(url: str, deadline: float) -> tuple[bool, dict[str, dict[str,
     """
     endpoint = f"{url}/api/filament-display"
     try:
-        with pinned_device_destination(endpoint) as ips:
+        parsed = urlsplit(url)
+        socket_path = None
+        if parsed.scheme == "unix":
+            if parsed.netloc or parsed.query or parsed.fragment or not parsed.path.startswith("/") or ".." in PurePosixPath(parsed.path).parts:
+                raise ValueError("display socket must be an absolute local path")
+            socket_path = parsed.path
+            endpoint = "http://localhost/api/filament-display"
+        destination = nullcontext(None) if socket_path else pinned_device_destination(endpoint)
+        with destination as ips:
             # Validate the exact addresses the connection will use.
-            if not ips or not all(is_private_destination(ip) for ip in ips):
+            if socket_path is None and (not ips or not all(is_private_destination(ip) for ip in ips)):
                 raise ValueError("display destination must be private")
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 raise TimeoutError
+            transport = {"transport": httpx.HTTPTransport(uds=socket_path, retries=0)} if socket_path else {}
             with httpx.Client(
                 timeout=httpx.Timeout(remaining),
                 follow_redirects=False,
                 trust_env=False,
                 headers={"Accept-Encoding": "identity"},
+                **transport,
             ) as client:
                 with client.stream("GET", endpoint) as response:
                     if response.status_code != 200:

@@ -687,3 +687,48 @@ def test_timed_out_dns_does_not_accumulate_transport_workers(fake, monkeypatch):
         gate.set()
         assert ledger_display._transport_lock.acquire(timeout=2)
         ledger_display._transport_lock.release()
+
+
+@pytest.mark.parametrize("url", ["unix://host/run/feed.sock", "unix:///run/../feed.sock", "unix:///run/feed.sock?query=1", "unix:///run/feed.sock#fragment", "unix:"])
+def test_invalid_socket_destination_cannot_fall_back_to_network(fake, url):
+    assert ledger_display._fetch_payload(url, time.monotonic() + 1) == (False, {})
+    assert fake.calls == []
+
+
+def test_unix_socket_transport_uses_only_local_feed(fake, monkeypatch):
+    calls = []
+    transport = object()
+    monkeypatch.setattr(ledger_display.httpx, "HTTPTransport", lambda **kw: calls.append(kw) or transport)
+    def no_dns(_endpoint):
+        raise AssertionError("Unix socket must not resolve a TCP destination")
+    monkeypatch.setattr(ledger_display, "pinned_device_destination", no_dns)
+    assert ledger_display._fetch_payload("unix:///run/odin-ledger/feed.sock", time.monotonic() + 1)[0]
+    assert calls == [{"uds": "/run/odin-ledger/feed.sock", "retries": 0}]
+    assert fake.calls == [("GET", "http://localhost/api/filament-display")]
+    assert fake.init_kwargs["transport"] is transport
+    assert fake.init_kwargs["follow_redirects"] is False
+    assert fake.init_kwargs["trust_env"] is False
+
+
+def test_real_unix_socket_round_trip(tmp_path, monkeypatch):
+    import socketserver
+    from http.server import BaseHTTPRequestHandler
+    socket_path = str(tmp_path / "feed.sock")
+    seen = []
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append(self.path)
+            body = json.dumps(ledger_payload()).encode()
+            self.send_response(200)
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        def log_message(self, *args):
+            pass
+    with socketserver.UnixStreamServer(socket_path, Handler) as server:
+        worker = threading.Thread(target=server.handle_request, daemon=True)
+        worker.start()
+        available, payload = ledger_display._fetch_payload("unix://" + socket_path, time.monotonic() + 2)
+        worker.join(timeout=2)
+    assert available and "u1" in payload
+    assert seen == ["/api/filament-display"]
