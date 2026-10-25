@@ -34,7 +34,9 @@ def _file_metadata(row):
 
 
 def read_generic_file(db, file_id, actor):
-    return _file_metadata(accessible_preview_file(db, file_id, actor))
+    from core.print_file_binding import target_printer
+    data = _file_metadata(accessible_preview_file(db, file_id, actor))
+    return {**data, "target_printer_id": target_printer(db, file_id)}
 
 
 def list_generic_files(db, actor, limit, include_scheduled):
@@ -56,6 +58,8 @@ def list_generic_files(db, actor, limit, include_scheduled):
             if not include_scheduled and row.job_id is not None:
                 continue
             data = _file_metadata(row)
+            from core.print_file_binding import target_printer
+            data["target_printer_id"] = target_printer(db, row.id)
             data.update(job_status=None, job_name=None)
             if row.job_id is not None:
                 job = db.execute(text('SELECT j.status,j.item_name,j.model_id,j.print_file_id,j.charged_to_org_id,EXISTS(SELECT 1 FROM education_submissions s WHERE s.job_id=j.id) AS education_owned FROM jobs j WHERE j.id=:id'), {'id': row.job_id}).first()
@@ -143,6 +147,8 @@ def schedule_generic_file(db, file_id, printer_id, actor):
             if printer_id is not None and printer_id != bound_printer_id:
                 raise HTTPException(400, 'This file is associated with a different printer; import a separately sliced file')
             printer_id = bound_printer_id
+        from core.print_file_binding import require_bound_target
+        require_bound_target(db, file_id, printer_id)
         target = None
         if printer_id is not None:
             target = lock_queue_reference(db, 'printers', printer_id, TARGET_FIELDS)
