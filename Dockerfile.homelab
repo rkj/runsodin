@@ -30,14 +30,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install go2rtc (camera proxy) — SHA256 verified per architecture
-ARG GO2RTC_VERSION=1.9.4
+ARG GO2RTC_VERSION=1.9.15
 ARG TARGETARCH=amd64
-# Hashes for v1.9.4: amd64 and arm64 (add others if new arches are targeted)
+# Hashes for v1.9.15: amd64 and arm64 (add others if new arches are targeted)
 RUN curl -fsSL "https://github.com/AlexxIT/go2rtc/releases/download/v${GO2RTC_VERSION}/go2rtc_linux_${TARGETARCH}" \
     -o /usr/local/bin/go2rtc \
     && case "${TARGETARCH}" in \
-         amd64) echo "8d86510e64e0deadee40d550d46323ddec9f62e14cec56de3a9df0f2f7fe9ada  /usr/local/bin/go2rtc" | sha256sum -c - ;; \
-         arm64) echo "ebea4cf3a0bc3a12190ebba1f2c4b3c8cf4aac099fadb4cd50a669429b074f1c  /usr/local/bin/go2rtc" | sha256sum -c - ;; \
+         amd64) echo "20b46c6910734cb05ecefb234066f36868ff19b42ba1418a7a32e13a3e035712  /usr/local/bin/go2rtc" | sha256sum -c - ;; \
+         arm64) echo "af416f22b21a24ab83b8d78642190b4932ae695b4e386853f11d1b0319781763  /usr/local/bin/go2rtc" | sha256sum -c - ;; \
          *)     echo "WARNING: no SHA256 checksum configured for arch=${TARGETARCH}" >&2 ;; \
        esac \
     && chmod +x /usr/local/bin/go2rtc
