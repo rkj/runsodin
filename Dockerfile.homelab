@@ -6,7 +6,7 @@
 #           MQTT monitor, Moonraker monitor, go2rtc
 # ============================================================
 
-FROM python:3.11-slim@sha256:0b23cfb7425d065008b778022a17b1551c82f8b4866ee5a7a200084b7e2eafbf AS backend-base
+FROM python:3.11-slim@sha256:65bd3d9f1d7fa268dd1909973ba7eb4bdf41f6dcf2cfbe76ba9528b170f3fd79 AS backend-base
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -43,7 +43,7 @@ RUN curl -fsSL "https://github.com/AlexxIT/go2rtc/releases/download/v${GO2RTC_VE
     && chmod +x /usr/local/bin/go2rtc
 
 # ── Node build stage for frontend ──
-FROM node:20-slim@sha256:c6585df72c34172bebd8d36abed961e231d7d3b5cee2e01294c4495e8a03f687 AS frontend-build
+FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS frontend-build
 
 WORKDIR /build/frontend
 COPY frontend/package*.json ./
