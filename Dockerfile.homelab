@@ -10,6 +10,9 @@ FROM python:3.11-slim@sha256:65bd3d9f1d7fa268dd1909973ba7eb4bdf41f6dcf2cfbe76ba9
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+RUN python -m pip install --no-cache-dir pip==26.3 setuptools==84.2.1 \
+    && python -m pip check
+
 # System deps — versions intentionally unpinned to track Debian security updates
 # hadolint ignore=DL3008
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -62,7 +65,7 @@ WORKDIR /app
 
 # Python dependencies
 COPY backend/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && pip check
 
 # Copy backend source
 COPY backend/ ./backend/

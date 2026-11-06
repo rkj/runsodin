@@ -2,6 +2,12 @@
 
 All notable changes to O.D.I.N. are documented here.
 
+## [Unreleased]
+
+### Security
+
+- Refresh the homelab container bases and bundled go2rtc, and update Authlib, fpdf2, pip, and setuptools to versions containing their current security fixes.
+
 ## [2.0.15] - 2026-10-25
 
 <!-- summary: Explicit production operator tokens for inspections and Square stock sends -->
